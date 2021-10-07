@@ -71,7 +71,17 @@ export default (cli: Cli): Command<Args> => ({
 	},
 })
 
-type Method = 'get' | 'put' | 'patch' | 'post' | 'delete' | 'options' | 'head'
+export const METHODS = [
+	'get',
+	'put',
+	'patch',
+	'post',
+	'delete',
+	'options',
+	'head',
+] as const
+
+export type Method = typeof METHODS[number]
 
 interface NameInfo {
 	name: string
@@ -201,9 +211,14 @@ function findLastResource(parts?: string[]): string | undefined {
 	}
 }
 
+function clean(template: string) {
+	return template.split('\n').filter(Boolean).join('\n')
+}
+
 // = TS =======================================================================
 
-const tsTemplate = `
+function generateTs(nameInfo: NameInfo) {
+	const template = `
 import type { FastifyInstance, FastifyRequest, RequestGenericInterface } from 'fastify'
 import type { StrictResource } from 'fastify-autoroutes'
 
@@ -227,9 +242,236 @@ export default (fastify: FastifyInstance): StrictResource => ({
 })
 `
 
-function generateTs(nameInfo: NameInfo) {
-	nameInfo
-	return ''
+	const toRemoveMethods = METHODS.filter(
+		(m) => nameInfo.suggest.includes(m) === false
+	)
+
+	console.log({
+		nameInfo,
+		methods: nameInfo.suggest,
+		toRemoveMethods,
+	})
+
+	console.log('=========================================')
+	console.log('initial')
+	console.log('=========================================')
+	console.log(template)
+
+	////////////////////////////////////////////////////////
+
+	console.log('=========================================')
+	console.log('BASE_INTERFACE')
+	console.log('=========================================')
+
+	const templateWithBaseInterface = template.replace(
+		'{{BASE_INTERFACE}}',
+		tsBuildTemplateBaseInterface(nameInfo)
+	)
+
+	console.log(templateWithBaseInterface)
+
+	////////////////////////////////////////////////////////
+
+	console.log('=========================================')
+	console.log('METHODS_INTERFACE')
+	console.log('=========================================')
+
+	const templateWithMethodsInterface = METHODS.reduce(
+		(currentTemplate, method) =>
+			currentTemplate.replace(
+				`{{${method.toUpperCase()}_INTERFACE}}`,
+				tsBuildTemplateSpecificInterface(method, nameInfo)
+			),
+		templateWithBaseInterface
+	)
+
+	console.log(templateWithMethodsInterface)
+
+	////////////////////////////////////////////////////////
+
+	console.log('=========================================')
+	console.log('METHODS_IMPLEMENTATION')
+	console.log('=========================================')
+
+	const templateWithMethodsImplementation = METHODS.reduce(
+		(currentTemplate, method) =>
+			currentTemplate.replace(
+				`{{${method.toUpperCase()}}}`,
+				tsBuildTemplateSpecificImplementation(method, nameInfo)
+			),
+		templateWithMethodsInterface
+	)
+
+	console.log(templateWithMethodsImplementation)
+
+	////////////////////////////////////////////////////////
+
+	console.log('=========================================')
+	console.log('FINAL')
+	console.log('=========================================')
+
+	const templateCleaned = toRemoveMethods.reduce(
+		(currentTemplate, method) =>
+			currentTemplate
+				.replace(`{{${method.toUpperCase()}_INTERFACE}}`, '')
+				.replace(`{{${method.toUpperCase()}`, ''),
+		templateWithMethodsImplementation
+	)
+
+	console.log(templateCleaned)
+
+	return templateCleaned
+}
+
+function tsBuildTemplateBaseInterface({ name, parameters }: NameInfo) {
+	const template = `interface Request{{name}} extends RequestGenericInterface {
+{{params}}
+}
+`
+	return template
+		.replace('{{name}}', name)
+		.replace(
+			'{{params}}',
+			parameters.length
+				? '  Params: {\n' +
+						parameters?.map((p) => `    ${p}: string`).join('\n') +
+						'\n  }'
+				: ''
+		)
+}
+
+function tsBuildTemplateSpecificInterface(method: Method, nameInfo: NameInfo) {
+	const template = `interface ${interfaceName(
+		method,
+		nameInfo
+	)} extends Request{{name}} {
+{{querystring}}
+{{body}}
+}`
+
+	return clean(
+		template
+			.replace(/{{name}}/g, nameInfo.name)
+			.replace(/{{method}}/g, capitalizeFirstLetter(method.toLowerCase()))
+			.replace(/{{querystring}}/g, tsBuildTemplateQueryString(method, nameInfo))
+			.replace(/{{body}}/g, tsBuildTemplateBody(method, nameInfo))
+	)
+}
+
+function interfaceName(method: Method, nameInfo: NameInfo) {
+	return `${capitalizeFirstLetter(method.toLowerCase())}Request${nameInfo.name}`
+}
+
+function tsBuildTemplateQueryString(method: Method, nameInfo: NameInfo) {
+	switch (method) {
+		case 'get': {
+			return nameInfo.type === 'RESOURCE'
+				? '  Querystring: Pagination & (GetByIds | Search)'
+				: ''
+		}
+
+		default: {
+			return ''
+		}
+	}
+}
+
+function tsBuildTemplateBody(method: Method, nameInfo: NameInfo) {
+	switch (method) {
+		case 'put':
+		case 'patch': {
+			return nameInfo.type === 'SPECIFIC'
+				? `  Body: Update${nameInfo.resource}`
+				: ''
+		}
+
+		case 'post': {
+			return nameInfo.type === 'RESOURCE'
+				? `  Body: Create${nameInfo.resource}`
+				: nameInfo.type === 'ACTION'
+				? `  Body: Do${nameInfo.action}`
+				: ''
+		}
+
+		default: {
+			return ''
+		}
+	}
+}
+
+function summary(method: Method, nameInfo: NameInfo) {
+	return `'${method} ${nameInfo.name}'`
+}
+
+function description(method: Method, nameInfo: NameInfo) {
+	return `'long ${method} ${nameInfo.name}'`
+}
+
+function tags(method: Method, nameInfo: NameInfo) {
+	return `['${nameInfo.name}']`
+}
+
+function returnType(method: Method, nameInfo: NameInfo) {
+	switch (method) {
+		case 'get': {
+			return nameInfo.type === 'RESOURCE'
+				? `Pagination<${nameInfo.name}>`
+				: nameInfo.type === 'SPECIFIC'
+				? nameInfo.name
+				: nameInfo.type === 'FIELD'
+				? `${nameInfo.name}['${nameInfo.resource?.toLocaleLowerCase()}']`
+				: ''
+		}
+	}
+}
+
+function tsBuildTemplateSpecificImplementation(
+	method: Method,
+	nameInfo: NameInfo
+) {
+	const template = `
+${method}: {
+  schema: {
+    summary: ${summary(method, nameInfo)},
+    description: ${description(method, nameInfo)},
+    tags: ${tags(method, nameInfo)},
+    accepts: ['application/json'],
+    produces: ['application/json'],
+    response: {
+      // 200: use(${nameInfo.name})
+  },
+  handler: async (request: FastifyRequest<${interfaceName(
+		method,
+		nameInfo
+	)}>): ${returnType(method, nameInfo)} => {
+    return void 0
+  }
+},
+`
+
+	switch (method) {
+		case 'get': {
+			return clean(template)
+		}
+		case 'put': {
+			return clean('')
+		}
+		case 'patch': {
+			return clean('')
+		}
+		case 'post': {
+			return clean('')
+		}
+		case 'delete': {
+			return clean('')
+		}
+		case 'options': {
+			return clean('')
+		}
+		case 'head': {
+			return clean('')
+		}
+	}
 }
 
 // = JS =======================================================================
