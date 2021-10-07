@@ -14,7 +14,8 @@ export default (cli: Cli): Command<Args> => ({
 	description: 'nome',
 	builder: (argv) => {
 		return (
-			argv // examples
+			argv
+				// examples
 				.example('route users.ts', 'create users route')
 				.example('route users/:userId.ts', 'create users/{userId} route')
 				.example(
@@ -56,8 +57,6 @@ export default (cli: Cli): Command<Args> => ({
 		)
 	},
 	handler: (argv) => {
-		console.log({ argv })
-
 		const routesDir = path.join(cli.settings.baseDir, cli.settings.routes)
 		const routePath = path.join(routesDir, argv.route)
 

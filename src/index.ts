@@ -12,7 +12,7 @@ import fs from 'fs'
 type Awaited<T> = T extends PromiseLike<infer U> ? U : T
 export type Cli = Awaited<ReturnType<typeof prepareCli>>
 
-const baseDir = `${new URL('.', import.meta.url).pathname}`
+const baseDir = __dirname //`${new URL('.', import.meta.url).pathname}`
 
 async function main() {
 	const cli = await prepareCli()
@@ -62,7 +62,7 @@ async function prepareCli() {
 		projectPath: process.cwd(),
 		settings,
 		output: {
-			error: chalk.red,
+			error: (message: string) => `Error:\n  ${message}`,
 		},
 	}
 }
